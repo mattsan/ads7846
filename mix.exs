@@ -19,6 +19,7 @@ defmodule ADS7846.MixProject do
 
   defp deps do
     [
+      {:input_event, "~> 0.4"}
     ]
   end
 end
