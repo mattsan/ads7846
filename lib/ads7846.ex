@@ -1,16 +1,20 @@
 defmodule ADS7846 do
   use GenServer
 
-  @name "ADS7846 Touchscreen"
+  @device_name "ADS7846 Touchscreen"
 
   def start_link(_opts) do
-    GenServer.start_link(__MODULE__, %{client: self()})
+    GenServer.start_link(__MODULE__, %{device_name: @device_name, client: self()})
   end
 
   def init(opts) do
-    {path, info} =
+    device_name = opts[:device_name]
+
+    {path, _info} =
       InputEvent.enumerate()
-      |> Enum.find(fn {_path, %InputEvent.Info{name: name}} -> name =~ @name end)
+      |> Enum.find(fn {_path, %InputEvent.Info{name: name}} ->
+        name =~ device_name
+      end)
 
     InputEvent.start_link(path)
 
@@ -18,27 +22,30 @@ defmodule ADS7846 do
   end
 
   def handle_info({:input_event, path, events}, %{path: path} = state) do
-    events
-    |> Enum.reduce(%{button: state.button, x: state.x, y: state.y}, fn
-      {:ev_key, :btn_touch, 0}, acc -> %{acc | button: :release}
-      {:ev_key, :btn_touch, 1}, acc -> %{acc | button: :press}
-      {:ev_abs, :abs_x, x}, acc -> %{acc | x: x}
-      {:ev_abs, :abs_y, y}, acc -> %{acc | y: y}
-      _, acc -> acc
-    end)
-    |> case do
-      %{button: button, x: x, y: y} when button == state.button ->
-        send(state.client, {:touch_event, self(), {:cursor_pos, {x, y}}})
+    next_state =
+      events
+      |> Enum.reduce(state, fn
+        {:ev_key, :btn_touch, 0}, state -> %{state | button: :release}
+        {:ev_key, :btn_touch, 1}, state -> %{state | button: :press}
+        {:ev_abs, :abs_x, x}, state -> %{state | x: x}
+        {:ev_abs, :abs_y, y}, state -> %{state | y: y}
+        _, state -> state
+      end)
 
-        {:noreply, %{state | x: x, y: y}}
+    input_event =
+      case next_state do
+        %{button: button, x: x, y: y} when button == state.button ->
+          {:cursor_pos, {x, y}}
 
-      %{button: button, x: x, y: y} ->
-        send(state.client, {:touch_event, self(), {:cursor_button, {:left, button, 0, {x, y}}}})
+        %{button: button, x: x, y: y} ->
+          {:cursor_button, {:left, button, 0, {x, y}}}
 
-        {:noreply, %{state | button: button, x: x, y: y}}
+        _ ->
+          nil
+      end
 
-      _ ->
-        {:noreply, state}
-    end
+    if is_tuple(input_event), do: send(next_state.client, {:touch_event, self(), input_event})
+
+    {:noreply, next_state}
   end
 end
